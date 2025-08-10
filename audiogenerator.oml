@@ -1,0 +1,87 @@
+clc;
+clear all;
+
+%% Step 1: Load Audio File
+[x, fs] = audioread('input.wav');     % Load audio file
+x = x(:,1);                           % Convert to mono if stereo
+frameLength = 132;
+numFrames = floor(length(x) / frameLength);
+
+%% Step 2: Initialize Filters and Parameters
+
+% Frequency Bands and Gain Levels (adjusted for smooth output)
+freqBands = [0, 500; 500, 2000; 2000, 8000];
+bandGains = [1.1, 1.0, 0.6];          % Softer gain in higher bands
+numBands = size(freqBands, 1);        % Number of frequency bands
+
+% Low-pass Filter (simulate hearing loss)
+[b, a] = butter(8, 2000 / (fs/2), 'low');  % 8th-order LPF
+
+% Noise Estimate (used only for the first frame)
+noiseEstimate = zeros(frameLength, 1);
+
+% Output container
+output = [];
+
+%% Step 3: Processing Loop
+for k = 1:numFrames
+    idx = (k-1)*frameLength + 1 : k*frameLength;
+    audioFrame = x(idx);
+    
+    % 3.1 Noise Reduction (simplified spectral subtraction)
+    frameSpectrum = fft(audioFrame);
+    if k == 1
+        noiseEstimate = abs(frameSpectrum);   % Initial noise estimate
+    end
+    cleanedSpectrum = max(abs(frameSpectrum) - noiseEstimate, 0);
+    cleanedFrame = real(ifft(cleanedSpectrum .* exp(j*arg(frameSpectrum))));
+    
+    % 3.2 Frequency-Specific Gain Adjustment
+    adjustedFrame = cleanedFrame;
+    N = length(adjustedFrame);
+    f = (0:N-1) * fs / N;
+    X = fft(adjustedFrame);
+    
+    for bIdx = 1:numBands
+        band = freqBands(bIdx, :);
+        idxBand = find(f >= band(1) & f <= band(2));
+        X(idxBand) = X(idxBand) * bandGains(bIdx);
+    end
+    
+    adjustedFrame = real(ifft(X));
+    
+    % 3.3 Simulate Hearing Impairment
+    muffledSignal = filter(b, a, adjustedFrame);     % Low-pass filtering
+    distortedSignal = tanh(muffledSignal);           % Compression distortion
+    noise = 0.01 * rand(length(distortedSignal), 1); % Add light noise
+    impairedSignal = distortedSignal + noise;        % Impaired output
+    
+    % 3.4 Envelope Smoothing (Moving average)
+    windowSize = 5;
+    smoothedSignal = filter(ones(1, windowSize)/windowSize, 1, impairedSignal);
+    
+    % Append to final output
+    output = [output; smoothedSignal];
+end
+
+%% Step 4: Save and Plot Output
+
+% Auto-generate output filename to prevent overwrite
+timestamp = datestr(now(), 'HHMMSS');
+filename = ['output_simulated_' timestamp '.wav'];
+audiowrite(filename, output, fs);
+
+% Plot both input and output for comparison
+figure;
+subplot(2,1,1);
+plot(output);
+xlabel('Samples');
+ylabel('Amplitude');
+title('Processed Output (Smoothed & Simulated)');
+
+subplot(2,1,2);
+plot(x(1:length(output)));  % Trim input for visual match
+xlabel('Samples');
+ylabel('Amplitude');
+title('Original Input Audio');
+
